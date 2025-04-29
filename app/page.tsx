@@ -1,103 +1,229 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect } from "react";
+import { ethers,  } from "ethers";
+import { Governance__factory } from "./typechain-types";
+
+// Contract address - you'll need to replace this with your deployed contract address
+const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
+
+interface Proposal {
+  title: string;
+  description: string;
+  proposer: string;
+  timestamp: number;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [account, setAccount] = useState<string>("");
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
+  const [contract, setContract] = useState<ReturnType<typeof Governance__factory.connect> | null>(null);
+  const [title, setTitle] = useState<string>("");
+  const [description, setDescription] = useState<string>("");
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // Connect to wallet
+  const connectWallet = async () => {
+    try {
+      if (window.ethereum) {
+        const accounts = await window.ethereum.request({
+          method: "eth_requestAccounts",
+        });
+        
+        // Use ethers v6 BrowserProvider
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        
+        setAccount(accounts[0]);
+        setProvider(provider);
+        setSigner(signer);
+        
+        // Initialize contract with TypeChain factory
+        const contract = Governance__factory.connect(
+          contractAddress,
+          signer
+        );
+        setContract(contract);
+        
+        // Load proposals
+        loadProposals(contract);
+      } else {
+        setError("Please install MetaMask to use this dApp");
+      }
+    } catch (error) {
+      setError("Error connecting to wallet");
+      console.error(error);
+    }
+  };
+
+  // Load proposals from the contract
+  const loadProposals = async (contractInstance: ReturnType<typeof Governance__factory.connect>) => {
+    try {
+      setIsLoading(true);
+      const count = await contractInstance.getProposalCount();
+      const proposalList: Proposal[] = [];
+      
+      for (let i = 0; i < count; i++) {
+        const proposal = await contractInstance.getProposal(i);
+        proposalList.push({
+          title: proposal[0],
+          description: proposal[1],
+          proposer: proposal[2],
+          timestamp: Number(proposal[3]),
+        });
+      }
+      
+      setProposals(proposalList);
+      setIsLoading(false);
+    } catch (error) {
+      setError("Error loading proposals");
+      setIsLoading(false);
+      console.error(error);
+    }
+  };
+
+  // Submit a new proposal
+  const submitProposal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!title || !description || !contract) {
+      setError("Title and description are required");
+      return;
+    }
+    
+    try {
+      setIsLoading(true);
+      const tx = await contract.createProposal(title, description);
+      await tx.wait();
+      
+      // Reset form
+      setTitle("");
+      setDescription("");
+      
+      // Reload proposals
+      await loadProposals(contract);
+      setIsLoading(false);
+    } catch (error) {
+      setError("Error submitting proposal");
+      setIsLoading(false);
+      console.error(error);
+    }
+  };
+
+  useEffect(() => {
+    // Check if we're in a browser environment
+    if (typeof window !== 'undefined' && window.ethereum) {
+      connectWallet();
+      
+      // Listen for account changes
+      window.ethereum.on("accountsChanged", (accounts: string[]) => {
+        setAccount(accounts[0]);
+        connectWallet();
+      });
+    }
+  }, []);
+
+  return (
+    <div className="min-h-screen p-8 bg-gray-50">
+      <div className="max-w-4xl mx-auto">
+        <h1 className="text-3xl font-bold mb-8 text-center text-black">Governance Proposals</h1>
+        
+        {/* Wallet Connection */}
+        <div className="mb-8 text-center">
+          {account ? (
+            <div className="p-4 bg-green-100 rounded-lg">
+              <p className="font-medium text-black">Connected: {account.substring(0, 6)}...{account.substring(account.length - 4)}</p>
+            </div>
+          ) : (
+            <button
+              onClick={connectWallet}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Connect Wallet
+            </button>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        
+        {/* Error Message */}
+        {error && (
+          <div className="p-4 mb-8 bg-red-100 text-black rounded-lg">
+            {error}
+          </div>
+        )}
+        
+        {/* Proposal Form */}
+        {account && (
+          <div className="mb-12 p-6 bg-white rounded-lg shadow-md">
+            <h2 className="text-2xl font-semibold mb-4 text-black">Submit a New Proposal</h2>
+            <form onSubmit={submitProposal}>
+              <div className="mb-4">
+                <label htmlFor="title" className="block text-sm font-medium mb-2 text-black">
+                  Title
+                </label>
+                <input
+                  type="text"
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded text-black"
+                  placeholder="Enter proposal title"
+                  required
+                />
+              </div>
+              
+              <div className="mb-6">
+                <label htmlFor="description" className="block text-sm font-medium mb-2 text-black">
+                  Description
+                </label>
+                <textarea
+                  id="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded text-black"
+                  rows={4}
+                  placeholder="Enter proposal description"
+                  required
+                />
+              </div>
+              
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full p-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400"
+              >
+                {isLoading ? "Submitting..." : "Submit Proposal"}
+              </button>
+            </form>
+          </div>
+        )}
+        
+        {/* Proposals List */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-2xl font-semibold mb-4 text-black">Existing Proposals</h2>
+          
+          {isLoading ? (
+            <p className="text-center p-4 text-black">Loading proposals...</p>
+          ) : proposals.length > 0 ? (
+            <div className="space-y-4">
+              {proposals.map((proposal, index) => (
+                <div key={index} className="p-4 border border-gray-200 rounded-lg">
+                  <h3 className="text-xl font-medium mb-2 text-black">{proposal.title}</h3>
+                  <p className="mb-2 text-black">{proposal.description}</p>
+                  <div className="text-sm text-black">
+                    <p>Proposed by: {proposal.proposer.substring(0, 6)}...{proposal.proposer.substring(proposal.proposer.length - 4)}</p>
+                    <p>Date: {new Date(proposal.timestamp * 1000).toLocaleString()}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center p-4 text-black">No proposals yet. Be the first to create one!</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
