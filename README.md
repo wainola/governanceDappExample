@@ -41,8 +41,6 @@ ALCHEMY_API_KEY=<YOUR_ALCHEMY_API_KEY>
 
 ## Deploy the Governance contract to Sepolia:
    ```bash
-   # For local development
-   npx hardhat node
    # In a new terminal
    npx hardhat run scripts/deploySepolia
    ```
